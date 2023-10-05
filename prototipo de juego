@@ -1,0 +1,134 @@
+#include <stdint.h>
+#include "inc/tm4c123gh6pm.h"
+#include "driverlib/gpio.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/adc.h"
+#include "driverlib/timer.h"
+#include "driverlib/uart.h"
+#include "ili9341.h"
+
+#define JUMPTHRESHOLD 2000
+#define CROUCHTHRESHOLD 1000
+
+#define DINOSAUR_WIDTH 24
+#define DINOSAUR_HEIGHT 24
+#define OBSTACLE_WIDTH 16
+#define OBSTACLE_HEIGHT 16
+
+int dinosaurX, dinosaurY;
+int obstacleX, obstacleY;
+int score;
+int gameover;
+
+void ConfigurePeripheralsAndPins() {
+    SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
+
+    GPIOPinTypeADC(GPIO_PORTD_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+}
+
+void ConfigureADC() {
+    ADCSequenceConfigure(ADC0_BASE, 1, ADC_TRIGGER_PROCESSOR, 0);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 0, ADC_CTL_CH7);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 1, ADC_CTL_CH6);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 2, ADC_CTL_IE | ADC_CTL_END);
+    ADCSequenceEnable(ADC0_BASE, 1);
+    ADCIntClear(ADC0_BASE, 1);
+}
+
+void ConfigureTimer() {
+    TimerConfigure(TIMER0_BASE, TIMER_CFG_PERIODIC);
+    TimerLoadSet(TIMER0_BASE, TIMER_A, SysCtlClockGet() / 10);
+    TimerEnable(TIMER0_BASE, TIMER_A);
+}
+
+int CheckCollision(int x1, int y1, int x2, int y2) {
+    int dinosaurLeft = x1;
+    int dinosaurRight = x1 + DINOSAUR_WIDTH;
+    int dinosaurTop = y1;
+    int dinosaurBottom = y1 + DINOSAUR_HEIGHT;
+
+    int obstacleLeft = x2;
+    int obstacleRight = x2 + OBSTACLE_WIDTH;
+    int obstacleTop = y2;
+    int obstacleBottom = y2 + OBSTACLE_HEIGHT;
+
+    if (dinosaurRight >= obstacleLeft && dinosaurLeft <= obstacleRight &&
+        dinosaurBottom >= obstacleTop && dinosaurTop <= obstacleBottom) {
+        return 1; // Hay colisión
+    } else {
+        return 0; // No hay colisión
+    }
+}
+
+void Initialize() {
+    ConfigurePeripheralsAndPins();
+    ConfigureADC();
+    ConfigureTimer();
+
+    // Inicializar variables del juego
+    dinosaurX = 50;
+    dinosaurY = LCD_HEIGHT - DINOSAUR_HEIGHT;
+    obstacleX = LCD_WIDTH;
+    obstacleY = LCD_HEIGHT - OBSTACLE_HEIGHT;
+    score = 0;
+    gameover = 0;
+}
+
+void ReadAnalogInputs() {
+    int jumpValue = ADCSequenceDataGet(ADC0_BASE, 1);
+    int crouchValue = ADCSequenceDataGet(ADC0_BASE, 2);
+
+    if (jumpValue > JUMPTHRESHOLD && !gameover) {
+        if (dinosaurY == LCD_HEIGHT - DINOSAUR_HEIGHT) {
+            dinosaurY -= 40;  // Altura del salto
+        }
+    } else if (crouchValue > CROUCHTHRESHOLD && !gameover) {
+        // Agacharse (si es necesario)
+    }
+}
+
+void UpdateGame() {
+    if (!gameover) {
+        obstacleX--;
+
+        if (CheckCollision(dinosaurX, dinosaurY, obstacleX, obstacleY)) {
+            gameover = 1;
+        }
+
+        if (obstacleX < -OBSTACLE_WIDTH) {
+            obstacleX = LCD_WIDTH;
+            score++;
+        }
+    }
+}
+
+void DrawGame() {
+    LCD_Clear();
+
+    if (!gameover) {
+        LCD_DrawImage(dinosaurX, dinosaurY, DinosaurImage);
+    } else {
+        LCD_DrawText(50, 100, "Game Over");
+    }
+
+    LCD_DrawImage(obstacleX, obstacleY, ObstacleImage);
+    LCD_DrawText(10, 10, "Score: %d", score);
+    LCD_Display();
+}
+
+int main(void) {
+    Initialize();
+
+    while (1) {
+        ReadAnalogInputs();
+        UpdateGame();
+        DrawGame();
+    }
+
+    return 0;
+}
